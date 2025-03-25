@@ -71,13 +71,3 @@ The script generates multifasta files in the specified output folder. Each file 
 >{gene}|{pop}|{indiv}|allele{anbr}
 ACTGACTGACTG...
 ```
-
----
-
-## Troubleshooting
-
-### Missing Files
-Ensure all file paths specified are correct. Use the `verify_files_exist()` function to locate errors.
-
-### Unsupported File Format
-Compressed files must be in `.gz` format. Ensure your input files are valid.
