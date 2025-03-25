@@ -1,6 +1,6 @@
 # VCF to Multifasta Script (Version 2.0.0)
 
-This script converts VCF files to multifasta format, incorporating population information, ploidy levels, and reference sequences for greater flexibility and accuracy. It can handle compressed VCF files and includes robust error handling and validation.
+This script converts VCF files to multifasta format, incorporating population information, ploidy levels, and reference sequences for greater flexibility and accuracy. It can handle compressed VCF files.
 
 ---
 
