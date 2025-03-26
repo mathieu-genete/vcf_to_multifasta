@@ -12,7 +12,7 @@ import time
 import gzip
 from io import StringIO
 
-__version__="2.0.0"
+__version__="2.0.1"
 
 def parse_arguments():
     """
@@ -31,7 +31,7 @@ def parse_arguments():
     parser.add_argument("-n", "--popname", help="Tabulated file containing individual and population names")
     parser.add_argument("-s", "--randomSeed", help="Random seed for reproducibility", type=int)
     parser.add_argument("-p", "--ploidy", help="Set the ploidy of samples (default=2)", type=int, default=2)
-    #parser.add_argument("-b", "--biallelic", help="Force biallelic SNPs check", action="store_true")
+    parser.add_argument("-nw", "--hidewarnings", help="hide warnings messages", action="store_const", const=True, default=False)
     return parser.parse_args()
 
 def setup_environment(outfolder, randomSeed):
@@ -82,7 +82,7 @@ def load_population_file(popname_file):
                     popname[tmp[0]] = tmp[1]
     return popname
     
-def parse_vcf(vcf_reader,ploidy,outfolder,ref_fasta_datas,contigs_length,popname,contigs_list):
+def parse_vcf(vcf_reader,ploidy,outfolder,ref_fasta_datas,contigs_length,popname,contigs_list,show_warnings=True):
     """
     Parse the VCF file and generate multifasta files.
 
@@ -95,9 +95,9 @@ def parse_vcf(vcf_reader,ploidy,outfolder,ref_fasta_datas,contigs_length,popname
         popname (dict): Population names mapped to individuals.
         contigs_list (list): List of contigs to process.
     """
+    dist_NbrAlleles=defaultdict(int)
     vcf_datas=defaultdict(dict)
     chr_name=""
-    progress=""
     nbr_contigs=len(contigs_length)
     i=0
     print_progress(i,nbr_contigs)
@@ -111,17 +111,43 @@ def parse_vcf(vcf_reader,ploidy,outfolder,ref_fasta_datas,contigs_length,popname
             i+=1
             if (i%10==0):
                 print_progress(i,nbr_contigs)
-                
+
+            check_indel(record,show_warnings)
+            
             write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs_length,popname)
             vcf_datas=defaultdict(dict)
                             
         chr_name = record.CHROM
-        process_vcf_samples(record,vcf_datas)
+        alleles_set=process_vcf_samples(record,vcf_datas)
         
+        dist_NbrAlleles[len(alleles_set)]+=1
+
+        # Handle allele set size warnings
+        if len(alleles_set) > ploidy:
+            print_warning(f"Mismatch detected: Found {len(alleles_set)} alleles, expected ploidy of {ploidy}. Check record at position {record.POS} in contig {record.CHROM}.", show_warning=show_warnings)
+           
     # Write the last contig
     write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs_length,popname)
     print_progress(i,nbr_contigs)
 
+    print("\n\n{} sites analysed over {} contigs/chromosomes".format(sum(dist_NbrAlleles.values()), i + 1))
+    print("\nDistribution of allele counts per site:")
+    print(f"{'Number of Alleles':<20}{'Frequency':<10}")
+    print("-" * 30)
+    for nbr_alleles, count in sorted(dist_NbrAlleles.items()):
+        print(f"{nbr_alleles:<20}{count:<10}")
+
+def print_warning(message, show_warning=True):
+    """
+    Print a warning message to the screen if warnings are enabled.
+
+    Args:
+        message (str): The warning message to be printed.
+        show_warning (bool): If True, the warning message is displayed. Default is True.
+    """
+    if show_warning:
+        print(f"\tWARNING - {message}")
+            
 def print_progress(i,nbr_contigs):
     """
     Print progress to the console.
@@ -142,19 +168,22 @@ def process_vcf_samples(record,vcf_datas):
         record (vcf.model._Record): VCF record.
         vcf_datas (dict): Data structure for storing sample alleles.
     """
+    alleles_set=set()
     for sample in record.samples:
         genotype = sample['GT']
         if genotype is not None and (genotype != './.' and genotype != '.'):
             # Extract alleles based on indices
             alleles = genotype.split('|') if '|' in genotype else genotype.split('/')
+            [alleles_set.add(a) for a in alleles]
             alleles = [record.REF if a == '0' else str(record.ALT[int(a) - 1]) for a in alleles]
             alleles = [a.replace('*','N') for a in alleles]
             random.shuffle(alleles)
-
+            
             if sample.sample not in vcf_datas.keys():
                 vcf_datas[sample.sample]={}
             # Adjust position as VCF is 1-based
             vcf_datas[sample.sample][record.POS-1]=alleles
+    return alleles_set
             
 def write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs_length,popname):
     """
@@ -228,6 +257,10 @@ def replace_notAllowed_chars(txt):
     NotAllowed={'|':'_'}
     return ''.join(c if c not in NotAllowed.keys() else NotAllowed[c] for c in txt)
 
+def check_indel(record,show_warnings=True):
+    if is_indel(record):
+        print_warning("InDel : {} {} - {} {}".format(record.CHROM,record.POS,record.REF,record.ALT),show_warning=show_warnings)
+    
 def is_indel(rec):
     """
     Check if a VCF record contains an indel (insertion or deletion).
@@ -241,25 +274,6 @@ def is_indel(rec):
     indel_REF= sum([len(str(a).replace('None','N')) for a in list(rec.REF)])!=len(list(rec.REF))
     indel_ALT= sum([len(str(a).replace('None','N')) for a in list(rec.ALT)])!=len(list(rec.ALT))
     return indel_REF or indel_ALT
-
-def is_biallelic(rec):
-    """
-    Check if a VCF record is biallelic.
-
-    Args:
-        rec (vcf.model._Record): VCF record.
-
-    Returns:
-        bool: True if the record is biallelic, False otherwise.
-    """
-    alphabet=["A","T","C","G"]
-    alt_bases=[r for r in rec.ALT if (r in alphabet)]
-    biallelic=False
-    if len(alt_bases)==1:
-        biallelic = any(sample['GT'] and '0' in sample['GT'] for sample in rec.samples)
-    elif len(alt_bases)==2:
-        biallelic = not any(sample['GT'] and '0' in sample['GT'] for sample in rec.samples)
-    return biallelic
         
 def find_Magic_Bytes(filename,magic_bytes):
     """
@@ -300,28 +314,68 @@ def load_vcf(vcf_filename):
 
     Returns:
         vcf.Reader: VCF reader object.
-    """
-    if is_gzip(vcf_filename):
-        with gzip.open(vcf_filename, 'rb') as f:
-            text_content = f.read().decode("latin-1")
-            vcf_reader = vcf.Reader(StringIO(text_content))
-    else:
-        vcf_reader = vcf.Reader(open(vcf_filename,'r',encoding="latin-1"))
 
-    return vcf_reader
+    Raises:
+        ValueError: If the file is not in valid VCF format.
+    """
+    try:
+        # Check if the file is gzipped
+        if is_gzip(vcf_filename):
+            with gzip.open(vcf_filename, 'rb') as f:
+                text_content = f.read().decode("latin-1")
+                # Validate if the content resembles a VCF file
+                if not text_content.startswith("##fileformat=VCF"):
+                    raise ValueError(f"The file '{vcf_filename}' does not appear to be a valid VCF file.")
+                vcf_reader = vcf.Reader(StringIO(text_content))
+        else:
+            with open(vcf_filename, 'r', encoding="latin-1") as f:
+                # Validate if the first line resembles a VCF file
+                first_line = f.readline()
+                if not first_line.startswith("##fileformat=VCF"):
+                    raise ValueError(f"The file '{vcf_filename}' does not appear to be a valid VCF file.")
+            vcf_reader = vcf.Reader(open(vcf_filename,'r',encoding="latin-1"))
+
+        return vcf_reader
+
+    except ValueError as e:
+        # Handle invalid format errors
+        print(f"ERROR: {e}")
+        sys.exit(1)
+    except FileNotFoundError:
+        # Handle missing file errors
+        print(f"ERROR: The file '{vcf_filename}' does not exist.")
+        sys.exit(1)
 
 def load_fasta(fasta_name):
     """
-    Load and index a fasta file.
+    Load and index a FASTA file.
 
     Args:
-        fasta_name (str): Path to the fasta file.
+        fasta_name (str): Path to the FASTA file.
 
     Returns:
-        dict: Indexed fasta sequences.
-    """
-    return SeqIO.index(fasta_name,"fasta")
+        dict: Indexed FASTA sequences.
 
+    Raises:
+        ValueError: If the file is not in FASTA format.
+    """
+    try:
+        # Attempt to read and validate the file as a FASTA file
+        with open(fasta_name, 'r') as file:
+            first_line = file.readline()
+            if not first_line.startswith(">"):
+                raise ValueError(f"The file '{fasta_name}' does not appear to be in FASTA format.")
+        
+        # If validation passes, proceed to load the file
+        fasta_data = SeqIO.index(fasta_name, "fasta")
+        return fasta_data
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
+    except FileNotFoundError:
+        print(f"ERROR: The file '{fasta_name}' does not exist.")
+        sys.exit(1)
+        
 def check_vcf_contigs(vcf_reader,fasta_datas):
     """
     Check consistency of contig names between VCF and fasta.
@@ -335,7 +389,10 @@ def check_vcf_contigs(vcf_reader,fasta_datas):
     contigs_not_found=contigs_IDs.difference(fasta_IDs)
 
     if len(contigs_not_found)>0:
-        print(contigs_not_found)
+        print(f"ERROR: {len(contigs_not_found)} contigs in the VCF file were not found in the reference FASTA file.")
+        print(f"Missing contigs: {', '.join(contigs_not_found)}")
+        print("Please ensure the FASTA file contains all the necessary contigs from the VCF file.")
+        sys.exit(1)
 
 def convert_to_int(value):
     """
@@ -411,7 +468,7 @@ def main():
 
     # Parse the VCF file and generate multifasta files
     print("*** Start parsing VCF file ***")
-    parse_vcf(vcf_reader,ploidy,outfolder,ref_fasta_datas,contigs_length,popname,contigs_list)
+    parse_vcf(vcf_reader,ploidy,outfolder,ref_fasta_datas,contigs_length,popname,contigs_list,show_warnings=(not args.hidewarnings))
     print("\nProcessing complete. Output files generated.")
 
 if __name__=="__main__":
