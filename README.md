@@ -36,14 +36,15 @@ pip install pyvcf
 Run the script with the following command-line options:
 
 | **Argument**       | **Description**                                   | **Required**      | **Default**      |
-|---------------------|--------------------------------------------------|-------------------|------------------|
-| `-v, --vcffile`     | Input VCF file (.vcf or .vcf.gz).                | Required          | N/A              |
-| `-o, --outfolder`   | Output folder for fasta files.                   | Required          | N/A              |
-| `-r, --reffasta`    | Fasta reference file.                            | Optional          | None             |
-| `-c, --contigslist` | Text file with contig or chromosome names.       | Optional          | All contigs.     |
-| `-n, --popname`     | File with individual and population names.       | Optional          | None             |
-| `-s, --randomSeed`  | Random seed for reproducibility.                 | Optional          | Current time.    |
-| `-p, --ploidy`      | Ploidy of samples.                               | Optional          | `2`.             |
+|----------------------|--------------------------------------------------|-------------------|------------------|
+| `-v, --vcffile`      | Input VCF file (.vcf or .vcf.gz).                | Required          | N/A              |
+| `-o, --outfolder`    | Output folder for fasta files.                   | Required          | N/A              |
+| `-r, --reffasta`     | Fasta reference file.                            | Optional          | None             |
+| `-c, --contigslist`  | Text file with contig or chromosome names.       | Optional          | All contigs.     |
+| `-n, --popname`      | File with individual and population names.       | Optional          | None             |
+| `-s, --randomSeed`   | Random seed for reproducibility.                 | Optional          | Current time.    |
+| `-p, --ploidy`       | Ploidy of samples.                               | Optional          | `2`.             |
+| `-nw, --hidewarnings`| hide warnings messages                           | Optional          | False            |
 
 ---
 
