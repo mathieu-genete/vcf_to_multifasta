@@ -48,7 +48,7 @@ Run the script with the following command-line options:
 
 ---
 
-## Example Command Line
+## Example command line
 
 Convert a VCF file to multifasta format using ploidy 2 and reference sequences:
 
