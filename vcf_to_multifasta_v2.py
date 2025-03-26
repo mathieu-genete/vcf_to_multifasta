@@ -6,13 +6,14 @@ import os
 import argparse
 from collections import defaultdict
 from Bio import SeqIO
+from Bio.Seq import Seq
 import vcf
 import random
 import time
 import gzip
 from io import StringIO
 
-__version__="2.0.1"
+__version__="2.0.2"
 
 def parse_arguments():
     """
@@ -114,7 +115,7 @@ def parse_vcf(vcf_reader,ploidy,outfolder,ref_fasta_datas,contigs_length,popname
 
             check_indel(record,show_warnings)
             
-            write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs_length,popname)
+            write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs_length,popname,show_warning=show_warnings)
             vcf_datas=defaultdict(dict)
                             
         chr_name = record.CHROM
@@ -127,7 +128,7 @@ def parse_vcf(vcf_reader,ploidy,outfolder,ref_fasta_datas,contigs_length,popname
             print_warning(f"Mismatch detected: Found {len(alleles_set)} alleles, expected ploidy of {ploidy}. Check record at position {record.POS} in contig {record.CHROM}.", show_warning=show_warnings)
            
     # Write the last contig
-    write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs_length,popname)
+    write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs_length,popname,show_warning=show_warnings)
     print_progress(i,nbr_contigs)
 
     print("\n\n{} sites analysed over {} contigs/chromosomes".format(sum(dist_NbrAlleles.values()), i + 1))
@@ -185,7 +186,7 @@ def process_vcf_samples(record,vcf_datas):
             vcf_datas[sample.sample][record.POS-1]=alleles
     return alleles_set
             
-def write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs_length,popname):
+def write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs_length,popname,show_warning=True):
     """
     Write multifasta files for a specific chromosome or contig.
 
@@ -239,7 +240,7 @@ def write_multifasta(chr_name,outfolder,vcf_datas,ref_fasta_datas,ploidy,contigs
                         seq+=b[p]
                     else:
                         seq+=b
-                        
+                check_coding_seq(replace_notAllowed_chars(chr_name),Seq(seq),show_warning=show_warning)        
                 outseq_ID="{gene}|{pop}|{indiv}|allele{anbr}".format(gene=replace_notAllowed_chars(chr_name),pop=popname_value,indiv=sample,anbr=p+1)
                 outseq=">{seqID}\n{sequence}\n".format(seqID=outseq_ID,sequence=seq)
                 out_fasta.write(outseq)
@@ -346,7 +347,7 @@ def load_vcf(vcf_filename):
         print(f"ERROR: The file '{vcf_filename}' does not exist.")
         sys.exit(1)
 
-def load_fasta(fasta_name):
+def load_fasta(fasta_name,show_warning=True):
     """
     Load and index a FASTA file.
 
@@ -360,6 +361,7 @@ def load_fasta(fasta_name):
         ValueError: If the file is not in FASTA format.
     """
     try:
+        print("*** Load and check reference fasta file ***")
         # Attempt to read and validate the file as a FASTA file
         with open(fasta_name, 'r') as file:
             first_line = file.readline()
@@ -368,6 +370,24 @@ def load_fasta(fasta_name):
         
         # If validation passes, proceed to load the file
         fasta_data = SeqIO.index(fasta_name, "fasta")
+
+        dist_stop=defaultdict(int)
+        nbr_not_multiple_3=0
+        for seq_id,fasta in fasta_data.items():
+            multiple_3,stop_count=check_coding_seq(seq_id,fasta.seq,show_warning=show_warning)
+            dist_stop[stop_count]+=1
+            nbr_not_multiple_3+=int(not multiple_3)
+
+        print("\n=== FASTA File Statistics ===")
+        print(f"Number of sequences loaded: {len(fasta_data)}")
+        print(f"Number of sequences not multiple of 3: {nbr_not_multiple_3}")
+        print(f"Distribution of stop codons across sequences:")
+        print(f"{'Stop Codon Count':<20}{'Frequency':<10}")
+        print("-" * 30)
+        for stop_count, frequency in sorted(dist_stop.items()):
+            print(f"{stop_count:<20}{frequency:<10}")
+
+        
         return fasta_data
     except ValueError as e:
         print(f"ERROR: {e}")
@@ -375,6 +395,15 @@ def load_fasta(fasta_name):
     except FileNotFoundError:
         print(f"ERROR: The file '{fasta_name}' does not exist.")
         sys.exit(1)
+
+def check_coding_seq(seq_id,sequence,show_warning=True):
+    multiple_3=len(sequence)%3==0
+    stop_count=sequence.translate().count("*")
+    if not multiple_3:
+        print_warning(f"sequence '{seq_id}' is not a multiple of 3",show_warning=show_warning)
+    if stop_count>1:
+        print_warning(f"sequence '{seq_id}' contains {stop_count} stop codons",show_warning=show_warning)
+    return multiple_3,stop_count
         
 def check_vcf_contigs(vcf_reader,fasta_datas):
     """
@@ -452,13 +481,6 @@ def main():
     contigs_length={contig:int(v.length) for contig,v in vcf_reader.contigs.items()}
     contigs_nbr=len(contigs_length)
 
-    # Load fasta reference if provided
-    if args.reffasta:
-        ref_fasta_datas = load_fasta(args.reffasta)
-        check_vcf_contigs(vcf_reader,ref_fasta_datas)
-    else:
-        ref_fasta_datas = None
-
     print("== VCF to multifasta -- version {} ==".format(__version__))
     print("Processing VCF file : {}".format(os.path.basename(args.vcffile)))
     print("ploidy : {}".format(ploidy))
@@ -466,8 +488,15 @@ def main():
     print("{} individuals : {}\n".format(len(all_samples),', '.join(all_samples)))
     print("Populations list : {}\n".format(', '.join(sorted(set(popname.values())))))
 
+    # Load fasta reference if provided
+    if args.reffasta:
+        ref_fasta_datas = load_fasta(args.reffasta,show_warning=(not args.hidewarnings))
+        check_vcf_contigs(vcf_reader,ref_fasta_datas)
+    else:
+        ref_fasta_datas = None
+
     # Parse the VCF file and generate multifasta files
-    print("*** Start parsing VCF file ***")
+    print("\n*** Start parsing VCF file ***")
     parse_vcf(vcf_reader,ploidy,outfolder,ref_fasta_datas,contigs_length,popname,contigs_list,show_warnings=(not args.hidewarnings))
     print("\nProcessing complete. Output files generated.")
 
